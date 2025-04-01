@@ -250,5 +250,37 @@ autoplot(wf)
 rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 ```
 
+# Question 3
+
+Data Splitting
+```{r}
+set.seed(123)
+# Bad form to perform simple transformations on the outcome variable within a 
+# recipe. So, we'll do it here.
+camels <- camels |> 
+  mutate(logQmean = log(q_mean))
+
+# Generate the split
+split_camels <- initial_split(camels, prop = 0.75)
+train_camels <- training(split_camels)
+test_camels  <- testing(split_camels)
+
+cv_camels <- vfold_cv(train_camels, v = 10)
+```
+
+Recipe 
+```{r}
+# Create a recipe to preprocess the data
+soil_rec <-  recipe(logQmean ~ soil_porosity + max_water_content, data = train_camels) %>%
+  # Log transform the predictor variables (aridity and p_mean)
+  step_log(all_predictors()) %>%
+  # Add an interaction term between aridity and p_mean
+  step_interact(terms = ~ soil_porosity:max_water_content) |> 
+  # Drop any rows with missing values in the pred
+  step_naomit(all_predictors(), all_outcomes())
+```
+I chose this formula because it identifies an interaction between soil porosity and max water content. 
+
+
 
 
