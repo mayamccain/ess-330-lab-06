@@ -281,6 +281,25 @@ soil_rec <-  recipe(logQmean ~ soil_porosity + max_water_content, data = train_c
 ```
 I chose this formula because it identifies an interaction between soil porosity and max water content. 
 
+Define 3 Models
+
+Model 1: Random Forest
+```{r}
+rf_model <- rand_forest(mode = "regression") %>%
+  set_engine("ranger")
+
+soil_recipe <- recipe(logQmean ~ soil_porosity + max_water_content, data = train_camels) %>%
+  step_log(all_predictors()) %>%
+  step_interact(terms = ~ soil_porosity:max_water_content) |> 
+  step_naomit(all_predictors(), all_outcomes())
+```
+
+Model 2: Logistic Regression
+```{r}
+
+```
+
+
 
 
 
