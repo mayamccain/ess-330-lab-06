@@ -32,6 +32,7 @@ camels <- power_full_join(camels ,by = 'gauge_id')
 ```
 
 ## Question 1
+
 ```{r}
 ggplot(data = camels, aes(x = gauge_lon, y = gauge_lat)) +
   borders("state", colour = "gray50") +
@@ -39,13 +40,16 @@ ggplot(data = camels, aes(x = gauge_lon, y = gauge_lat)) +
   scale_color_gradient(low = "pink", high = "dodgerblue") +
   ggthemes::theme_map()
 ```
+
 ## Question 2
+
 ```{r}
 camels |> 
   select(aridity, p_mean, q_mean) |> 
   drop_na() |> 
   cor()
 ```
+
 ```{r}
 # Create a scatter plot of aridity vs rainfall
 ggplot(camels, aes(x = aridity, y = p_mean)) +
@@ -135,10 +139,12 @@ baked_data <- prep(rec, camels_train) |>
 lm_base <- lm(logQmean ~ aridity * p_mean, data = baked_data)
 summary(lm_base)
 ```
+
 ```{r}
 # Sanity Interaction term from recipe ... these should be equal!!
 summary(lm(logQmean ~ aridity + p_mean + aridity_x_p_mean, data = baked_data))
 ```
+
 ```{r}
 test_data <-  bake(prep(rec), new_data = camels_test)
 test_data$lm_pred <- predict(lm_base, newdata = test_data)
@@ -162,6 +168,7 @@ ggplot(test_data, aes(x = logQmean, y = lm_pred, colour = aridity)) +
 ```
 
 Using workflow instead
+
 ```{r}
 # Define model
 lm_model <- linear_reg() %>%
@@ -182,12 +189,14 @@ lm_wf <- workflow() %>%
 # Extract the model coefficients from the workflow
 summary(extract_fit_engine(lm_wf))$coefficients
 ```
+
 ```{r}
 # From the base implementation
 summary(lm_base)$coefficients
 ```
 
 Making Predictions
+
 ```{r}
 #
 lm_data <- augment(lm_wf, new_data = camels_test)
@@ -197,6 +206,7 @@ dim(lm_data)
 ```{r}
 metrics(lm_data, truth = logQmean, estimate = .pred)
 ```
+
 ```{r}
 ggplot(lm_data, aes(x = logQmean, y = .pred, colour = aridity)) +
   scale_color_viridis_c() +
@@ -206,6 +216,7 @@ ggplot(lm_data, aes(x = logQmean, y = .pred, colour = aridity)) +
 ```
 
 Switching it up
+
 ```{r}
 library(baguette)
 rf_model <- rand_forest() %>%
@@ -227,6 +238,7 @@ dim(rf_data)
 ```
 
 Model Evaluation
+
 ```{r}
 metrics(rf_data, truth = logQmean, estimate = .pred)
 ```
@@ -240,12 +252,14 @@ ggplot(rf_data, aes(x = logQmean, y = .pred, colour = aridity)) +
 ```
 
 A workflowset approach
+
 ```{r}
 wf <- workflow_set(list(rec), list(lm_model, rf_model)) %>%
   workflow_map('fit_resamples', resamples = camels_cv) 
 
 autoplot(wf)
 ```
+
 ```{r}
 rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 ```
@@ -253,6 +267,7 @@ rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 # Question 3
 
 Data Splitting
+
 ```{r}
 set.seed(123)
 # Bad form to perform simple transformations on the outcome variable within a 
@@ -268,38 +283,52 @@ test_camels  <- testing(split_camels)
 cv_camels <- vfold_cv(train_camels, v = 10)
 ```
 
-Recipe 
+Recipe
 ```{r}
-# Create a recipe to preprocess the data
 soil_rec <-  recipe(logQmean ~ soil_porosity + max_water_content, data = train_camels) %>%
-  # Log transform the predictor variables (aridity and p_mean)
   step_log(all_predictors()) %>%
-  # Add an interaction term between aridity and p_mean
   step_interact(terms = ~ soil_porosity:max_water_content) |> 
-  # Drop any rows with missing values in the pred
   step_naomit(all_predictors(), all_outcomes())
 ```
-I chose this formula because it identifies an interaction between soil porosity and max water content. 
+
+I chose this formula because it identifies an interaction between soil porosity and max water content.
 
 Define 3 Models
 
 Model 1: Random Forest
 ```{r}
-rf_model <- rand_forest(mode = "regression") %>%
-  set_engine("ranger")
-
-soil_recipe <- recipe(logQmean ~ soil_porosity + max_water_content, data = train_camels) %>%
-  step_log(all_predictors()) %>%
-  step_interact(terms = ~ soil_porosity:max_water_content) |> 
-  step_naomit(all_predictors(), all_outcomes())
+rf_mod <- rand_forest() |>
+  set_engine("ranger") |>
+  set_mode("regression")
 ```
 
-Model 2: Logistic Regression
+Model 2: Random Forest 2
+```{r}
+rf_mod2 <- rand_forest() |>
+  set_engine('randomForest') |>
+  set_mode("regression")
+```
+
+Model 3: XGboost
+```{r}
+xgb_mod <- boost_tree() |>
+  set_engine('xgboost') |>
+  set_mode("regression")
+```
+
+Workflow Set
+```{r}
+wf <- workflow_set(list(soil_rec), list(rf_mod, rf_mod2, xgb_mod)) |>
+  workflow_map("fit_resamples", resample = cv_camels)
+```
+Evaluation
+```{r}
+autoplot(wf)
+rank_results(wf, rank_metric = "rsq", select_best = TRUE)
+```
+
+Extract and Evaluate
 ```{r}
 
 ```
-
-
-
-
 
