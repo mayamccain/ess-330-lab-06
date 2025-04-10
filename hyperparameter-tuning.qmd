@@ -1,0 +1,109 @@
+---
+title: "hyperparameter-tuning"
+author: "Maya McCain"
+format: html
+editor: visual
+---
+
+# Data Import/Tidy/Transform
+
+## Library Loading
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(powerjoin)
+library(glue)
+library(vip)
+library(baguette)
+```
+
+## Data Ingest
+
+```{r}
+camels <- map(local_files, read_delim, show_col_types = FALSE)
+camels <- power_full_join(camels ,by = 'gauge_id')
+```
+
+## Data Cleaning
+
+```{r}
+glimpse(camels)
+skimr::skim(camels)
+visdat::vis_dat(camels)
+
+camels <- camels %>% 
+  drop_na()
+glimpse(camels)
+visdat::vis_dat(camels)
+```
+
+# Data Splitting
+
+## Initial Split
+
+```{r}
+set.seed(123)
+camels <- camels |> 
+  mutate(logQmean = log(q_mean))
+```
+
+## Testing/Training
+
+```{r}
+camels_split <- initial_split(camels, prop = 0.8)
+camels_train <- training(camels_split)
+camels_test  <- testing(camels_split)
+```
+
+# Feature Engineering
+
+## Proper Recipe
+
+```{r}
+rec <- recipe(logQmean ~ p_seasonality + p_mean, data = camels_train) %>%
+  # Log transform with offset to avoid NaNs
+  step_log(all_predictors(), offset = 1) %>%
+  # Add interaction term
+  step_interact(terms = ~ p_seasonality:p_mean) %>%
+  # Drop rows with NAs just in case
+  step_naomit(all_predictors(), all_outcomes())
+
+```
+
+
+
+# Data Resampling and Model Testing
+
+## Cross Validation Dataset (k-folds)
+
+```{r}
+camels_cv <- vfold_cv(camels_train, v = 10)
+```
+
+## Define Three Regression Models
+```{r}
+# Random Forest Model
+rf_model <- rand_forest() |>
+  set_engine("randomForest") |>
+  set_mode("regression")
+
+# XGBoost Model
+xgb_model <- boost_tree() |>
+  set_engine('xgboost') |>
+  set_mode("regression")
+
+# Neural Network Model
+nn_model <- mlp(hidden = 10) |>
+  set_engine('nnet') |>
+  set_mode("regression")
+```
+
+## Workflow Set/Map/Autoplot
+```{r}
+wf <- workflow_set(list(rec), list(rf_model, xgb_model, nn_model)) |>
+  workflow_map(resamples = cv_camels)
+
+```
+
+## Model Selection with Justification
