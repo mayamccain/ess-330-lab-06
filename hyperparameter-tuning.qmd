@@ -61,17 +61,11 @@ camels_test  <- testing(camels_split)
 ## Proper Recipe
 
 ```{r}
-rec <- recipe(logQmean ~ p_seasonality + p_mean, data = camels_train) %>%
-  # Log transform with offset to avoid NaNs
-  step_log(all_predictors(), offset = 1) %>%
-  # Add interaction term
-  step_interact(terms = ~ p_seasonality:p_mean) %>%
-  # Drop rows with NAs just in case
-  step_naomit(all_predictors(), all_outcomes())
-
+rec <- recipe(logQmean ~ slope_mean + runoff_ratio, data = camels_train) %>%
+  step_naomit(all_predictors(), all_outcomes()) %>%
+  step_log(slope_mean, runoff_ratio, offset = 1) %>%
+  step_interact(terms = ~ slope_mean:runoff_ratio)
 ```
-
-
 
 # Data Resampling and Model Testing
 
@@ -102,8 +96,13 @@ nn_model <- mlp(hidden = 10) |>
 ## Workflow Set/Map/Autoplot
 ```{r}
 wf <- workflow_set(list(rec), list(rf_model, xgb_model, nn_model)) |>
-  workflow_map(resamples = cv_camels)
+  workflow_map(resamples = camels_cv)
 
+autoplot(wf)
+rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 ```
 
 ## Model Selection with Justification
+The neural network model is the best model for looking at this relationship. As shown in the autoplot, the neural network model has an r-squared of about 0.94, which shows a higher correlation between mean slope and runoff ratio. The lower root mean squared error of about 0.255 shows that there is a higher correlation between the variables because there is less error.
+
+The neural network model is based on the human brain in order to make predictions and identify patterns. It used the 'nnet' engine and the regression mode. This model likely performs well for stream flow prediction using slope and runoff ratio because it may be a nonlinear relationship, and the neural network model works well with these relationships. The neural network is also good at generalization and is good at adapting to different data. These qualities are useful when studying this relationship. 
