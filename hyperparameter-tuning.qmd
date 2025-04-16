@@ -1,5 +1,5 @@
 ---
-title: "hyperparameter-tuning"
+title: "Lab 8: Hyperparameter Tuning"
 author: "Maya McCain"
 format: html
 editor: visual
@@ -16,13 +16,24 @@ library(powerjoin)
 library(glue)
 library(vip)
 library(baguette)
+library(patchwork)
 ```
 
 ## Data Ingest
 
 ```{r}
+root  <- 'https://gdex.ucar.edu/dataset/camels/file'
+download.file('https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.pdf', 
+              'data/camels_attributes_v2.0.pdf')
+types <- c("clim", "geol", "soil", "topo", "vege", "hydro")
+# Where the files live online ...
+remote_files  <- glue('{root}/camels_{types}.txt')
+# where we want to download the data ...
+local_files   <- glue('data/camels_{types}.txt')
+walk2(remote_files, local_files, download.file, quiet = TRUE)
+# Read and merge data
 camels <- map(local_files, read_delim, show_col_types = FALSE)
-camels <- power_full_join(camels ,by = 'gauge_id')
+camels <- power_full_join(camels, by = 'gauge_id')
 ```
 
 ## Data Cleaning
@@ -76,6 +87,7 @@ camels_cv <- vfold_cv(camels_train, v = 10)
 ```
 
 ## Define Three Regression Models
+
 ```{r}
 # Random Forest Model
 rf_model <- rand_forest() |>
@@ -88,12 +100,13 @@ xgb_model <- boost_tree() |>
   set_mode("regression")
 
 # Neural Network Model
-nn_model <- mlp(hidden = 10) |>
+nn_model <- mlp() |>
   set_engine('nnet') |>
   set_mode("regression")
 ```
 
 ## Workflow Set/Map/Autoplot
+
 ```{r}
 wf <- workflow_set(list(rec), list(rf_model, xgb_model, nn_model)) |>
   workflow_map(resamples = camels_cv)
@@ -103,6 +116,143 @@ rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 ```
 
 ## Model Selection with Justification
+
 The neural network model is the best model for looking at this relationship. As shown in the autoplot, the neural network model has an r-squared of about 0.94, which shows a higher correlation between mean slope and runoff ratio. The lower root mean squared error of about 0.255 shows that there is a higher correlation between the variables because there is less error.
 
-The neural network model is based on the human brain in order to make predictions and identify patterns. It used the 'nnet' engine and the regression mode. This model likely performs well for stream flow prediction using slope and runoff ratio because it may be a nonlinear relationship, and the neural network model works well with these relationships. The neural network is also good at generalization and is good at adapting to different data. These qualities are useful when studying this relationship. 
+The neural network model is based on the human brain in order to make predictions and identify patterns. It used the 'nnet' engine and the regression mode. This model likely performs well for stream flow prediction using slope and runoff ratio because it may be a nonlinear relationship, and the neural network model works well with these relationships. The neural network is also good at generalization and is good at adapting to different data. These qualities are useful when studying this relationship.
+
+# Model Tuning
+
+## Tunable model setup
+
+```{r}
+nn_parameter_model <- mlp(hidden_units = tune(), penalty = tune()) |>
+  set_engine('nnet') |>
+  set_mode("regression")
+```
+
+## Tunable workflow defined
+
+```{r}
+nn_wf <- workflow(rec, nn_parameter_model)
+```
+
+## Description of dial ranges
+
+```{r}
+dials <- extract_parameter_set_dials(nn_wf)
+dials$object
+```
+
+## Defined Search Space
+
+```{r}
+my.grid <- 
+  nn_wf |> 
+  extract_parameter_set_dials() |> 
+  grid_space_filling(size = 25)
+
+grid <- my.grid |> 
+  ggplot(aes(dropout, learn_rate)) +
+  geom_point(size = 4) +
+  scale_y_log10()
+```
+
+## Executed Tune Grid
+
+```{r}
+model_params <-  tune_grid(
+    nn_wf,
+    resamples = camels_cv,
+    grid = my.grid,
+    metrics = metric_set(rmse, rsq, mae),
+    control = control_grid(save_pred = TRUE)
+  )
+
+autoplot(model_params)
+```
+Both hidden units and penalty (amount of regularization) have a high r-squared, a low root mean squared error, and relatively low mean absolute error. In general, the parameters performed well. A small to moderate number of hidden units and low dropout are ideal for this model. 
+
+# Check the skill of the tuned model
+## Collect Metrics/Show Best/Describe in Plain Language
+```{r}
+mod_metrics <- collect_metrics(model_params)
+print(mod_metrics)
+```
+The model metrics show the mean metric (either mae, rmse, or rsq) when using both hyperparameters after applying it to the 10 folds. 
+```{r}
+show_best(model_params, metric = "mae")
+```
+Different sets of the hidden units and penatly parameters behave similarly and give similar mae means. The best hyperparameter set is hidden units of 7 and 1.467799e-06 penalty (amount of regularization). The mean mean absolute error of using this set is 0.189. A low mae is ideal because it shows lower amount of error. 
+
+```{r}
+hp_best <- select_best(model_params, metric = "mae")
+print(hp_best)
+```
+# Finalize your model
+## Finalize Workflow
+```{r}
+final_wf <- finalize_workflow(nn_wf, hp_best)
+```
+
+# Final Model Verification
+## Implement the last fit
+```{r}
+final_fit <- last_fit(final_wf, camels_split)
+```
+
+## Interpret Metrics
+```{r}
+collect_metrics(final_fit)
+```
+This final model performs well on the testing data. An indicator of a well performing model is a high r-squared and a low root mean squared error. The final model has a r-squared value of 0.94 which means 94% of the variance of streamflow can be explained by the predictors (slope mean and runoff ratio). This model also has a root mean squared error value of 0.35, which means the models predictions are different from the actual values by 0.35 units. The final model performs a bit worse on the testing data than the training data, however it is still a good model. 
+
+## Plot Predictions
+```{r}
+collect_predictions(final_fit) |> 
+  ggplot(aes(x = .pred, y = logQmean)) + 
+  geom_point() +
+  geom_abline() + 
+  geom_smooth(method = "lm") + 
+  theme_linedraw() + 
+  scale_color_manual(values = c("darkblue", "lightblue")) +
+  labs(title = "Final Fit", 
+       x = "Predicted (Log10)", 
+       y = "Actual (Log10)")
+```
+
+# Final Figure
+## Augment Data & Calculate Residuals
+```{r}
+full_pred = fit(final_wf, data = camels) |>
+  augment(new_data = camels) |>
+  mutate(diff = .pred - logQmean)
+```
+
+## Map Predicted Q and Residuals
+
+Map of Predictions
+```{r}
+pred_map <- ggplot(data = full_pred, aes(x = gauge_lon, y = gauge_lat)) +
+  borders("state", colour = "gray50") +
+  geom_point(aes(color = .pred)) +
+  scale_color_gradient(low = "lightblue", high = "darkblue") +
+  ggthemes::theme_map()
+
+print(pred_map)
+```
+
+Map of Residuals
+```{r}
+resid_map <- ggplot(data = full_pred, aes(x = gauge_lon, y = gauge_lat)) +
+  borders("state", colour = "gray50") +
+  geom_point(aes(color = diff)) +
+  scale_color_gradient(low = "green", high = "red") +
+  ggthemes::theme_map()
+print(resid_map)
+```
+
+```{r}
+combined_maps <- pred_map + resid_map
+print(combined_maps)
+```
